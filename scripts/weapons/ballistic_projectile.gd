@@ -90,11 +90,15 @@ func _handle_impact(hit: Dictionary) -> void:
 		# Damage Enemy (supports head/body hitboxes)
 		if collider.has_method("take_ballistic_hit"):
 			collider.take_ballistic_hit(damage, hit_pos, velocity.normalized(), false)
+			if shooter_tag == "player":
+				GameManager.enemy_hit.emit(false)
 			_spawn_impact_fx(hit_pos, hit_normal, "flesh")
 			return
 		elif collider.get_parent() and collider.get_parent().has_method("take_ballistic_hit"):
 			var is_head: bool = collider.has_meta("is_head") and bool(collider.get_meta("is_head"))
 			collider.get_parent().take_ballistic_hit(damage, hit_pos, velocity.normalized(), is_head)
+			if shooter_tag == "player":
+				GameManager.enemy_hit.emit(is_head)
 			_spawn_impact_fx(hit_pos, hit_normal, "flesh")
 			return
 

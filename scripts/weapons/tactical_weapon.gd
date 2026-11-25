@@ -40,6 +40,10 @@ var reload_pos: Vector3 = Vector3(0.12, -0.36, -0.36)
 # Internal nodes
 var _weapon_pivot: Node3D
 var _bolt_mesh: MeshInstance3D
+var _mag_mesh: MeshInstance3D
+var _mag_base_pos: Vector3 = Vector3(0, -0.105, -0.05)
+var _draw_anim: float = 1.0 # Smooth weapon raise animation on spawn
+var _reload_duration: float = 1.55
 var _muzzle_point: Marker3D
 var _ejection_port: Marker3D
 var _flashlight: SpotLight3D
@@ -116,9 +120,9 @@ func _build_weapon_model() -> void:
 	supp.material_override = poly_mat
 	_weapon_pivot.add_child(supp)
 
-	# Curved tactical magazine
-	var mag := _add_box(_weapon_pivot, Vector3(0.036, 0.16, 0.072), Vector3(0, -0.105, -0.05), poly_mat)
-	mag.rotation_degrees.x = 12.0
+	# Curved tactical magazine (animated during reload!)
+	_mag_mesh = _add_box(_weapon_pivot, Vector3(0.036, 0.16, 0.072), _mag_base_pos, poly_mat)
+	_mag_mesh.rotation_degrees.x = 12.0
 
 	# Pistol grip & Stock
 	var grip := _add_box(_weapon_pivot, Vector3(0.036, 0.11, 0.045), Vector3(0, -0.075, 0.095), poly_mat)
@@ -159,18 +163,16 @@ func _build_weapon_model() -> void:
 	_add_box(_weapon_pivot, Vector3(0.028, 0.028, 0.11), Vector3(0.038, 0.012, -0.31), fde_mat)
 	_add_box(_weapon_pivot, Vector3(0.024, 0.024, 0.095), Vector3(-0.036, 0.008, -0.33), metal_mat)
 
-	# Tactical Weapon Flashlight (SpotLight3D with crisp shadows + volumetric fog interaction!)
+	# Tactical Weapon Flashlight (fast non-shadow SpotLight3D for steady 60 FPS)
 	_flashlight = SpotLight3D.new()
 	_flashlight.position = Vector3(-0.036, 0.008, -0.39)
 	_flashlight.light_color = Color(0.95, 0.97, 1.0)
-	_flashlight.light_energy = 7.5
-	_flashlight.light_volumetric_fog_energy = 2.6
-	_flashlight.spot_range = 42.0
-	_flashlight.spot_attenuation = 1.35
-	_flashlight.spot_angle = 29.0
-	_flashlight.spot_angle_attenuation = 1.85
-	_flashlight.shadow_enabled = true
-	_flashlight.shadow_bias = 0.04
+	_flashlight.light_energy = 6.2
+	_flashlight.spot_range = 38.0
+	_flashlight.spot_attenuation = 1.25
+	_flashlight.spot_angle = 32.0
+	_flashlight.spot_angle_attenuation = 1.7
+	_flashlight.shadow_enabled = false
 	_weapon_pivot.add_child(_flashlight)
 
 	# Real RayCast Laser Sight
@@ -342,28 +344,69 @@ func update_weapon(delta: float, move_speed: float, is_sprinting: bool, is_crouc
 		var bamp := (0.0035 if is_aiming else 0.014) * clampf(move_speed / 4.0, 0.2, 1.5)
 		bob = Vector3(cos(_bob_phase) * bamp, absf(sin(_bob_phase)) * bamp * 1.15, 0.0)
 
-	# Target weapon pose
+	# Draw / Equip raise animation on spawn
+	if _draw_anim > 0.0:
+		_draw_anim = maxf(0.0, _draw_anim - delta * 2.4)
+
+	# Target weapon pose + 4-stage keyframed tactical reload animation!
 	var target_pos: Vector3 = hip_pos
 	var target_rot: Vector3 = Vector3(
 		-_free_aim_offset.y * 0.85,
 		-_free_aim_offset.x * 1.05,
 		-_sway_offset.x * 1.9
 	)
+	var target_mag_pos: Vector3 = _mag_base_pos
+	var target_bolt_z: float = -0.01
+
 	if is_reloading:
-		target_pos = reload_pos
-		target_rot = Vector3(0.32, 0.42, -0.58)
+		var prog: float = clampf(1.0 - (_reload_timer / _reload_duration), 0.0, 1.0)
+		if prog < 0.25:
+			# Stage 1: Tilt rifle & release old magazine downward
+			var u := prog / 0.25
+			target_pos = hip_pos.lerp(Vector3(0.11, -0.24, -0.35), u)
+			target_rot = Vector3(0.24 * u, 0.36 * u, -0.62 * u)
+			target_mag_pos = _mag_base_pos + Vector3(0.0, -0.26 * u, 0.02 * u)
+		elif prog < 0.55:
+			# Stage 2: Bring fresh magazine up into magwell
+			var u := (prog - 0.25) / 0.30
+			target_pos = Vector3(0.11, -0.24, -0.35)
+			target_rot = Vector3(0.24, 0.36, -0.62)
+			target_mag_pos = _mag_base_pos + Vector3(0.0, lerpf(-0.28, 0.0, u), 0.0)
+		elif prog < 0.80:
+			# Stage 3: Magazine slap bump + pull charging handle / bolt back
+			var u := (prog - 0.55) / 0.25
+			var slap := sin(minf(u * 2.5, 1.0) * PI) * 0.024
+			target_pos = Vector3(0.13, -0.22 + slap, -0.36)
+			target_rot = Vector3(0.18 + slap * 2.0, 0.28, -0.45)
+			target_bolt_z = lerpf(-0.01, 0.065, u)
+		else:
+			# Stage 4: Slam bolt forward & return rifle smoothly to ready
+			var u := (prog - 0.80) / 0.20
+			target_pos = Vector3(0.13, -0.22, -0.36).lerp(hip_pos, u)
+			target_rot = Vector3(0.18, 0.28, -0.45).lerp(Vector3.ZERO, u)
+			target_bolt_z = -0.01
 	elif is_sprinting and not is_aiming:
 		target_pos = sprint_pos
-		target_rot = Vector3(-0.24, 0.48, 0.28)
+		target_rot = Vector3(-0.26, 0.52, 0.30)
 	elif is_aiming:
 		target_pos = ads_pos
 		target_rot = Vector3(0.0, 0.0, -_sway_offset.x * 0.6)
 
+	# Apply smooth weapon draw-in curve
+	if _draw_anim > 0.0:
+		var ease_d := _draw_anim * _draw_anim
+		target_pos += Vector3(0.05 * ease_d, -0.28 * ease_d, 0.12 * ease_d)
+		target_rot += Vector3(-0.55 * ease_d, 0.25 * ease_d, 0.15 * ease_d)
+
+	_mag_mesh.position = _mag_mesh.position.lerp(target_mag_pos, delta * 18.0)
+	if is_reloading:
+		_bolt_mesh.position.z = lerpf(_bolt_mesh.position.z, target_bolt_z, delta * 24.0)
+
 	var final_pos := target_pos + _recoil_offset + breath + bob + Vector3(_sway_offset.x, _sway_offset.y, 0.0)
 	var final_rot := target_rot + _recoil_rot
 
-	position = position.lerp(final_pos, delta * 14.0)
-	rotation = rotation.lerp(final_rot, delta * 14.0)
+	position = position.lerp(final_pos, delta * 15.0)
+	rotation = rotation.lerp(final_rot, delta * 15.0)
 
 	# Update Flashlight & Laser Sight
 	_flashlight.visible = flashlight_on
@@ -413,9 +456,22 @@ func _execute_shot() -> void:
 	ammo_in_mag -= 1
 	_fire_cooldown = fire_rate
 
-	# True barrel alignment shot direction (with slight realistic dispersion if hip-firing)
-	var spread := 0.002 if is_aiming else 0.011
+	# Converge muzzle shot accurately toward camera aim point
+	var cam := get_viewport().get_camera_3d()
 	var dir: Vector3 = -_muzzle_point.global_transform.basis.z
+	if cam != null:
+		var cam_from: Vector3 = cam.global_position
+		var cam_fwd: Vector3 = -cam.global_transform.basis.z
+		var aim_target: Vector3 = cam_from + cam_fwd * 100.0
+		var space := get_world_3d().direct_space_state
+		var q := PhysicsRayQueryParameters3D.create(cam_from + cam_fwd * 0.35, aim_target)
+		q.collision_mask = 1 | (1 << 2) | (1 << 3)
+		q.collide_with_areas = true
+		var h := space.intersect_ray(q)
+		if not h.is_empty():
+			aim_target = h["position"]
+		dir = (aim_target - _muzzle_point.global_position).normalized()
+	var spread := 0.0015 if is_aiming else 0.0085
 	dir = (dir + Vector3(
 		randf_range(-spread, spread),
 		randf_range(-spread, spread),

@@ -1,31 +1,22 @@
-[gd_resource type="AudioBusLayout" load_steps=4 format=3]
-
-[sub_resource type="AudioEffectCompressor" id="AudioEffectCompressor_1"]
-resource_name = "Compressor"
-threshold = -8.0
-ratio = 3.5
-attack_us = 120.0
-release_ms = 180.0
+[gd_resource type="AudioBusLayout" load_steps=3 format=3]
 
 [sub_resource type="AudioEffectLimiter" id="AudioEffectLimiter_1"]
 resource_name = "Limiter"
-ceiling_db = -0.5
+ceiling_db = -1.0
 
 [sub_resource type="AudioEffectReverb" id="AudioEffectReverb_1"]
 resource_name = "WarehouseReverb"
-predelay_msec = 28.0
-room_size = 0.68
-damping = 0.42
-spread = 0.85
-hipass = 0.15
-dry = 0.78
-wet = 0.36
+predelay_msec = 22.0
+room_size = 0.52
+damping = 0.62
+spread = 0.72
+hipass = 0.25
+dry = 0.88
+wet = 0.16
 
 [resource]
-bus/0/effect/0/effect = SubResource("AudioEffectCompressor_1")
+bus/0/effect/0/effect = SubResource("AudioEffectLimiter_1")
 bus/0/effect/0/enabled = true
-bus/0/effect/1/effect = SubResource("AudioEffectLimiter_1")
-bus/0/effect/1/enabled = true
 bus/1/name = &"SFX_Outdoor"
 bus/1/solo = false
 bus/1/mute = false
@@ -36,7 +27,7 @@ bus/2/name = &"SFX_Indoor"
 bus/2/solo = false
 bus/2/mute = false
 bus/2/bypass_fx = false
-bus/2/volume_db = 0.5
+bus/2/volume_db = 0.0
 bus/2/send = &"Master"
 bus/2/effect/0/effect = SubResource("AudioEffectReverb_1")
 bus/2/effect/0/enabled = true
@@ -44,7 +35,7 @@ bus/3/name = &"Ambience"
 bus/3/solo = false
 bus/3/mute = false
 bus/3/bypass_fx = false
-bus/3/volume_db = -3.0
+bus/3/volume_db = -8.0
 bus/3/send = &"Master"
 bus/4/name = &"UI"
 bus/4/solo = false

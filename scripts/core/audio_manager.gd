@@ -30,6 +30,9 @@ func _preload_all_audio() -> void:
 		"shell_casing.wav",
 		"dry_fire.wav",
 		"flashlight_click.wav",
+		"hitmarker.wav",
+		"ui_hover.wav",
+		"ui_click.wav",
 		"weapon_reload.wav",
 		"impact_concrete.wav",
 		"impact_metal.wav",
@@ -85,14 +88,14 @@ func _process(delta: float) -> void:
 	if get_tree().paused:
 		return
 
-	# Dynamic indoor/outdoor muffling of rain & wind
+	# Dynamic indoor/outdoor muffling of rain & wind (gentle, non-fatiguing mix)
 	var is_raining: bool = GameManager.weather_preset == GameManager.WeatherPreset.RAIN_STORM
 	var target_rain_db: float = -80.0
 	if is_raining:
-		target_rain_db = -21.0 if GameManager.player_indoors else -9.0
+		target_rain_db = -28.0 if GameManager.player_indoors else -16.0
 	_rain_player.volume_db = lerpf(_rain_player.volume_db, target_rain_db, delta * 3.0)
 
-	var target_wind_db: float = -24.0 if GameManager.player_indoors else -14.0
+	var target_wind_db: float = -30.0 if GameManager.player_indoors else -20.0
 	_wind_player.volume_db = lerpf(_wind_player.volume_db, target_wind_db, delta * 3.0)
 
 	# Physiological heartbeat when injured or high BPM

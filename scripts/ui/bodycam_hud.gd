@@ -1,8 +1,10 @@
 extends CanvasLayer
-## Authentic Axon-style Bodycam HUD, Post-Processing Shader Driver,
-## Diegetic Tactical Event Log, Pause/Realism Settings & Level Selector Menu.
+## Authentic Axon-style Bodycam HUD, Fast Post-Processing Driver,
+## Main Menu on First Launch, Live FPS & Objective Distance, Hitmarker,
+## Pause/Settings & Multi-Level Selector.
 
 const BodycamShader = preload("res://shaders/bodycam_post.gdshader")
+const SettingsPanelScript = preload("res://scripts/ui/settings_panel.gd")
 
 var _post_rect: ColorRect
 var _post_mat: ShaderMaterial
@@ -14,16 +16,20 @@ var _interact_label: Label
 var _mag_label: Label
 var _help_panel: PanelContainer
 var _crosshair_dot: ColorRect
+var _hitmarker_label: Label
 var _mission_banner: PanelContainer
 var _mission_banner_label: Label
 var _pause_menu: PanelContainer
+var _settings_panel: PanelContainer
+var _pause_title: Label
+var _pause_resume_btn: Button
 var _death_overlay: PanelContainer
 
 var _event_lines: Array[String] = []
 var _mag_timer: float = 0.0
+var _hitmarker_timer: float = 0.0
 var _shutter_flash: float = 0.0
 var _damage_vignette: float = 0.0
-var _rain_lens: float = 0.0
 
 
 func _ready() -> void:
@@ -43,10 +49,18 @@ func _ready() -> void:
 	GameManager.player_died.connect(_on_player_died)
 	GameManager.mission_updated.connect(_on_mission_updated)
 	GameManager.settings_changed.connect(_sync_shader_settings)
+	GameManager.enemy_hit.connect(_on_enemy_hit)
 
 	_sync_shader_settings()
 	_on_event_logged(GameManager.LEVEL_NAMES[GameManager.current_level_index], "INFO")
-	_on_event_logged("OBJECTIVE: ELIMINATE HOSTILES & SECURE INTEL", "INFO")
+	_on_event_logged("OBJECTIF: ÉLIMINER HOSTILES & SÉCURISER L'INTEL", "INFO")
+
+	# Open cleanly into the Main Menu on initial game launch (unless --bench mode)
+	if GameManager.show_title_on_boot and not OS.get_cmdline_args().has("--bench"):
+		GameManager.show_title_on_boot = false
+		_pause_title.text = "SECTOR 09 // BODYCAM"
+		_pause_resume_btn.text = "▶ JOUER LA MISSION"
+		_toggle_pause(true)
 
 
 func _build_post_processing() -> void:
@@ -60,41 +74,41 @@ func _build_post_processing() -> void:
 
 
 func _build_bodycam_overlay() -> void:
-	# Top-right Authentic AXON BODY 4 Timestamp & Telemetry
+	# Top-right AXON BODY 4 Timestamp, FPS & Mission Telemetry
 	var tr_box := HBoxContainer.new()
 	tr_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	tr_box.offset_left = -410
-	tr_box.offset_top = 20
-	tr_box.offset_right = -24
-	tr_box.offset_bottom = 110
+	tr_box.offset_left = -450
+	tr_box.offset_top = 18
+	tr_box.offset_right = -20
+	tr_box.offset_bottom = 120
 	tr_box.alignment = BoxContainer.ALIGNMENT_END
 	tr_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tr_box)
 
 	_rec_dot = ColorRect.new()
-	_rec_dot.custom_minimum_size = Vector2(12, 12)
+	_rec_dot.custom_minimum_size = Vector2(11, 11)
 	_rec_dot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_rec_dot.color = Color(0.95, 0.14, 0.12)
 	tr_box.add_child(_rec_dot)
 
 	_stamp_label = Label.new()
 	_stamp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_stamp_label.add_theme_font_size_override("font_size", 15)
-	_stamp_label.add_theme_color_override("font_color", Color(0.94, 0.96, 0.98, 0.92))
-	_stamp_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+	_stamp_label.add_theme_font_size_override("font_size", 14)
+	_stamp_label.add_theme_color_override("font_color", Color(0.94, 0.96, 0.98, 0.94))
+	_stamp_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	_stamp_label.add_theme_constant_override("shadow_offset_x", 1)
 	_stamp_label.add_theme_constant_override("shadow_offset_y", 1)
 	tr_box.add_child(_stamp_label)
 
-	# Top-left Event Log & Mission Telemetry
+	# Top-left Event Log
 	_event_log_label = Label.new()
 	_event_log_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_event_log_label.offset_left = 24
-	_event_log_label.offset_top = 20
-	_event_log_label.offset_right = 560
-	_event_log_label.offset_bottom = 220
-	_event_log_label.add_theme_font_size_override("font_size", 14)
-	_event_log_label.add_theme_color_override("font_color", Color(0.86, 0.93, 0.88, 0.88))
+	_event_log_label.offset_left = 20
+	_event_log_label.offset_top = 18
+	_event_log_label.offset_right = 540
+	_event_log_label.offset_bottom = 200
+	_event_log_label.add_theme_font_size_override("font_size", 13)
+	_event_log_label.add_theme_color_override("font_color", Color(0.86, 0.94, 0.88, 0.9))
 	_event_log_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	_event_log_label.add_theme_constant_override("shadow_offset_x", 1)
 	_event_log_label.add_theme_constant_override("shadow_offset_y", 1)
@@ -105,11 +119,11 @@ func _build_bodycam_overlay() -> void:
 	_interact_label = Label.new()
 	_interact_label.set_anchors_preset(Control.PRESET_CENTER)
 	_interact_label.offset_left = -240
-	_interact_label.offset_top = 75
+	_interact_label.offset_top = 68
 	_interact_label.offset_right = 240
-	_interact_label.offset_bottom = 115
+	_interact_label.offset_bottom = 108
 	_interact_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_interact_label.add_theme_font_size_override("font_size", 17)
+	_interact_label.add_theme_font_size_override("font_size", 16)
 	_interact_label.add_theme_color_override("font_color", Color(1.0, 0.94, 0.72, 0.96))
 	_interact_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 	_interact_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -119,88 +133,106 @@ func _build_bodycam_overlay() -> void:
 	_mag_label = Label.new()
 	_mag_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_mag_label.offset_left = -430
-	_mag_label.offset_top = -70
-	_mag_label.offset_right = -24
-	_mag_label.offset_bottom = -28
+	_mag_label.offset_top = -65
+	_mag_label.offset_right = -20
+	_mag_label.offset_bottom = -22
 	_mag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_mag_label.add_theme_font_size_override("font_size", 16)
+	_mag_label.add_theme_font_size_override("font_size", 15)
 	_mag_label.add_theme_color_override("font_color", Color(0.95, 0.92, 0.78, 0.95))
 	_mag_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 	_mag_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_mag_label)
 
-	# Optional minimal 3x3px dot crosshair (OFF by default for pure Bodycam realism — toggle [G])
+	# Subtle tactical center dot (toggle [G])
 	_crosshair_dot = ColorRect.new()
 	_crosshair_dot.set_anchors_preset(Control.PRESET_CENTER)
-	_crosshair_dot.offset_left = -1.5
-	_crosshair_dot.offset_top = -1.5
-	_crosshair_dot.offset_right = 1.5
-	_crosshair_dot.offset_bottom = 1.5
-	_crosshair_dot.color = Color(1.0, 1.0, 1.0, 0.55)
+	_crosshair_dot.offset_left = -2.0
+	_crosshair_dot.offset_top = -2.0
+	_crosshair_dot.offset_right = 2.0
+	_crosshair_dot.offset_bottom = 2.0
+	_crosshair_dot.color = Color(1.0, 1.0, 1.0, 0.65)
 	_crosshair_dot.visible = GameManager.show_crosshair
 	_crosshair_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_crosshair_dot)
 
-	# Bottom-left Toggleable Tactical Controls Guide ([H])
+	# Crisp Hitmarker (flashes white on body hit, red on headshot)
+	_hitmarker_label = Label.new()
+	_hitmarker_label.set_anchors_preset(Control.PRESET_CENTER)
+	_hitmarker_label.offset_left = -20
+	_hitmarker_label.offset_top = -18
+	_hitmarker_label.offset_right = 20
+	_hitmarker_label.offset_bottom = 18
+	_hitmarker_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hitmarker_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_hitmarker_label.text = "✕"
+	_hitmarker_label.add_theme_font_size_override("font_size", 22)
+	_hitmarker_label.visible = false
+	_hitmarker_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hitmarker_label)
+
+	# Bottom-left Toggleable Controls Guide ([H])
 	_help_panel = PanelContainer.new()
 	_help_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_help_panel.offset_left = 20
-	_help_panel.offset_top = -175
-	_help_panel.offset_right = 430
-	_help_panel.offset_bottom = -18
+	_help_panel.offset_left = 18
+	_help_panel.offset_top = -148
+	_help_panel.offset_right = 415
+	_help_panel.offset_bottom = -16
 	_help_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var pstyle := StyleBoxFlat.new()
-	pstyle.bg_color = Color(0.04, 0.05, 0.06, 0.52)
+	pstyle.bg_color = Color(0.04, 0.05, 0.06, 0.56)
 	pstyle.set_border_width_all(1)
 	pstyle.border_color = Color(0.5, 0.58, 0.62, 0.35)
-	pstyle.set_content_margin_all(10)
+	pstyle.set_content_margin_all(9)
 	_help_panel.add_theme_stylebox_override("panel", pstyle)
 	add_child(_help_panel)
 
 	var hlbl := Label.new()
-	hlbl.text = "COMMANDES TACTIQUES (AZERTY & QWERTY):\n[ZQSD/WASD] Déplacer  |  [Shift] Sprint  |  [Ctrl/C] Accroupir\n[A/E] Pencher  |  [Clic G/D] Tirer / Viser  |  [X] Semi/Auto\n[R] Recharger  |  [B] Chargeur  |  [F] Lampe  |  [L] Laser\n[N] Vision IR  |  [T] Météo  |  [G] Point  |  [H] Aide  |  [ESC] Menu"
-	hlbl.add_theme_font_size_override("font_size", 12)
-	hlbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.92, 0.88))
+	hlbl.text = "COMMANDES (AZERTY & QWERTY):\n[ZQSD/WASD] Déplacer | [Shift] Sprint | [Ctrl/C] Accroupir\n[A/E] Pencher | [Clic G/D] Tirer / Viser | [X] Semi/Auto\n[R] Recharger | [B] Chargeur | [F] Lampe | [L] Laser\n[N] IR | [T] Météo | [E/V] Interagir | [H] Aide | [ESC] Menu"
+	hlbl.add_theme_font_size_override("font_size", 11)
+	hlbl.add_theme_color_override("font_color", Color(0.86, 0.92, 0.94, 0.9))
 	_help_panel.add_child(hlbl)
 
 
 func _build_pause_menu() -> void:
 	_pause_menu = PanelContainer.new()
 	_pause_menu.set_anchors_preset(Control.PRESET_CENTER)
-	_pause_menu.offset_left = -290
+	_pause_menu.offset_left = -280
 	_pause_menu.offset_top = -255
-	_pause_menu.offset_right = 290
+	_pause_menu.offset_right = 280
 	_pause_menu.offset_bottom = 255
 	_pause_menu.visible = false
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.05, 0.06, 0.08, 0.92)
+	st.bg_color = Color(0.05, 0.06, 0.08, 0.93)
 	st.set_border_width_all(2)
-	st.border_color = Color(0.32, 0.42, 0.48, 0.85)
-	st.set_content_margin_all(22)
+	st.border_color = Color(0.32, 0.44, 0.52, 0.85)
+	st.set_content_margin_all(20)
 	_pause_menu.add_theme_stylebox_override("panel", st)
 	add_child(_pause_menu)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
+	vb.add_theme_constant_override("separation", 9)
 	_pause_menu.add_child(vb)
 
-	var title := Label.new()
-	title.text = "SECTOR 09 // MENU TACTIQUE & RÉALISME"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 20)
-	vb.add_child(title)
+	_pause_title = Label.new()
+	_pause_title.text = "SECTOR 09 // MENU PAUSE"
+	_pause_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_pause_title.add_theme_font_size_override("font_size", 22)
+	vb.add_child(_pause_title)
 
-	# Resume button
-	var btn_resume := Button.new()
-	btn_resume.text = "▶ REPRENDRE LA MISSION"
-	btn_resume.pressed.connect(func(): _toggle_pause(false))
-	vb.add_child(btn_resume)
+	_pause_resume_btn = Button.new()
+	_pause_resume_btn.text = "▶ REPRENDRE LA MISSION"
+	_pause_resume_btn.custom_minimum_size = Vector2(0, 38)
+	_pause_resume_btn.pressed.connect(func():
+		_pause_title.text = "SECTOR 09 // MENU PAUSE"
+		_pause_resume_btn.text = "▶ REPRENDRE LA MISSION"
+		_toggle_pause(false)
+	)
+	vb.add_child(_pause_resume_btn)
 
-	# Level Selector Section
 	var lvl_hdr := Label.new()
-	lvl_hdr.text = "— SÉLECTION DU NIVEAU —"
+	lvl_hdr.text = "— CHOISIR UN NIVEAU —"
 	lvl_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lvl_hdr.add_theme_font_size_override("font_size", 14)
+	lvl_hdr.add_theme_font_size_override("font_size", 13)
 	vb.add_child(lvl_hdr)
 
 	for i in range(GameManager.LEVEL_NAMES.size()):
@@ -208,68 +240,70 @@ func _build_pause_menu() -> void:
 		lb.text = GameManager.LEVEL_NAMES[i]
 		var idx := i
 		lb.pressed.connect(func():
+			GameManager.show_title_on_boot = false
 			GameManager.load_level(idx)
 		)
 		vb.add_child(lb)
 
-	# Realism Settings Section
 	var set_hdr := Label.new()
 	set_hdr.text = "— PARAMÈTRES GRAPHIQUES & BODYCAM —"
 	set_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	set_hdr.add_theme_font_size_override("font_size", 14)
+	set_hdr.add_theme_font_size_override("font_size", 13)
 	vb.add_child(set_hdr)
 
-	# Graphics Preset button
-	var btn_gfx := Button.new()
-	var update_gfx_txt := func():
-		var names := ["PERFORMANCE (SSAO + VolFog)", "HAUT (SSR + SSAO + SSIL + VolFog)", "ULTRA (+ SDFGI Temps Réel)"]
-		btn_gfx.text = "Qualité Graphique : " + names[GameManager.graphics_preset]
-	update_gfx_txt.call()
-	btn_gfx.pressed.connect(func():
-		GameManager.graphics_preset = (GameManager.graphics_preset + 1) % 3
-		update_gfx_txt.call()
-		GameManager.notify_settings_changed()
+	var btn_settings := Button.new()
+	btn_settings.text = "⚙ RÉGLAGES DU JEU (Audio / Souris / FOV / Graphismes)"
+	btn_settings.pressed.connect(func():
+		AudioManager.play_2d("ui_click", -8.0, 0.02)
+		_pause_menu.visible = false
+		_settings_panel.visible = true
 	)
-	vb.add_child(btn_gfx)
+	vb.add_child(btn_settings)
 
-	# Weather cycle button
 	var btn_weather := Button.new()
-	btn_weather.text = "Changer Météo / Heure (Orage / Crépuscule / Brouillard / Aube)"
-	btn_weather.pressed.connect(func():
-		GameManager.cycle_weather_preset()
-	)
+	btn_weather.text = "☁ Changer Météo / Heure"
+	btn_weather.pressed.connect(func(): GameManager.cycle_weather_preset())
 	vb.add_child(btn_weather)
 
-	# Fisheye toggle
-	var btn_fish := Button.new()
-	var update_fish := func():
-		btn_fish.text = "Distorsion Objectif Bodycam (Fisheye) : %s" % ("ACTIVE" if GameManager.barrel_strength > 0.01 else "OFF")
-	update_fish.call()
-	btn_fish.pressed.connect(func():
-		GameManager.barrel_strength = 0.0 if GameManager.barrel_strength > 0.01 else 0.115
-		update_fish.call()
-		GameManager.notify_settings_changed()
+	var btn_menu := Button.new()
+	btn_menu.text = "← RETOUR AU MENU PRINCIPAL"
+	btn_menu.pressed.connect(func():
+		GameManager.set_paused(false)
+		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 	)
-	vb.add_child(btn_fish)
+	vb.add_child(btn_menu)
 
-	# Quit button
 	var btn_quit := Button.new()
 	btn_quit.text = "✕ QUITTER LE JEU"
 	btn_quit.pressed.connect(func(): get_tree().quit())
 	vb.add_child(btn_quit)
 
+	# Embedded full Settings Panel inside Pause Menu
+	_settings_panel = PanelContainer.new()
+	_settings_panel.set_script(SettingsPanelScript)
+	_settings_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_settings_panel.offset_left = -300
+	_settings_panel.offset_top = -255
+	_settings_panel.offset_right = 300
+	_settings_panel.offset_bottom = 255
+	_settings_panel.visible = false
+	_settings_panel.closed.connect(func():
+		_settings_panel.visible = false
+		_pause_menu.visible = true
+	)
+	add_child(_settings_panel)
+
 
 func _build_death_and_victory_overlays() -> void:
-	# Mission Complete Banner
 	_mission_banner = PanelContainer.new()
 	_mission_banner.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_mission_banner.offset_left = -310
-	_mission_banner.offset_top = 85
+	_mission_banner.offset_top = 80
 	_mission_banner.offset_right = 310
-	_mission_banner.offset_bottom = 195
+	_mission_banner.offset_bottom = 185
 	_mission_banner.visible = false
 	var vst := StyleBoxFlat.new()
-	vst.bg_color = Color(0.05, 0.14, 0.08, 0.88)
+	vst.bg_color = Color(0.05, 0.14, 0.08, 0.90)
 	vst.set_border_width_all(2)
 	vst.border_color = Color(0.28, 0.85, 0.45, 0.9)
 	vst.set_content_margin_all(14)
@@ -281,23 +315,22 @@ func _build_death_and_victory_overlays() -> void:
 	_mission_banner_label = Label.new()
 	_mission_banner_label.text = "SECTEUR NETTOYÉ // INTEL SÉCURISÉ — MISSION ACCOMPLIE"
 	_mission_banner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_mission_banner_label.add_theme_font_size_override("font_size", 17)
+	_mission_banner_label.add_theme_font_size_override("font_size", 16)
 	vvb.add_child(_mission_banner_label)
 	var btn_next := Button.new()
 	btn_next.text = "▶ PASSER AU NIVEAU SUIVANT"
 	btn_next.pressed.connect(func(): GameManager.next_level())
 	vvb.add_child(btn_next)
 
-	# Officer Down Overlay
 	_death_overlay = PanelContainer.new()
 	_death_overlay.set_anchors_preset(Control.PRESET_CENTER)
 	_death_overlay.offset_left = -240
-	_death_overlay.offset_top = -95
+	_death_overlay.offset_top = -90
 	_death_overlay.offset_right = 240
-	_death_overlay.offset_bottom = 95
+	_death_overlay.offset_bottom = 90
 	_death_overlay.visible = false
 	var dst := StyleBoxFlat.new()
-	dst.bg_color = Color(0.14, 0.02, 0.02, 0.9)
+	dst.bg_color = Color(0.14, 0.02, 0.02, 0.92)
 	dst.set_border_width_all(2)
 	dst.border_color = Color(0.85, 0.18, 0.16, 0.9)
 	dst.set_content_margin_all(18)
@@ -310,7 +343,7 @@ func _build_death_and_victory_overlays() -> void:
 	var dlbl := Label.new()
 	dlbl.text = "OFFICER DOWN // BODYCAM SIGNAL LOST"
 	dlbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	dlbl.add_theme_font_size_override("font_size", 19)
+	dlbl.add_theme_font_size_override("font_size", 18)
 	dvb.add_child(dlbl)
 	var btn_retry := Button.new()
 	btn_retry.text = "↻ RECOMMENCER LE NIVEAU"
@@ -333,46 +366,57 @@ func _unhandled_input(event: InputEvent) -> void:
 func _toggle_pause(paused: bool) -> void:
 	GameManager.set_paused(paused)
 	_pause_menu.visible = paused
+	if not paused and is_instance_valid(_settings_panel):
+		_settings_panel.visible = false
 
 
 func _process(delta: float) -> void:
-	# Blinking REC LED
 	var t := Time.get_ticks_msec() * 0.001
 	_rec_dot.visible = fmod(t, 1.2) < 0.65
 
-	# Authentic Axon Body 4 live clock & telemetry
 	var h := int(floor(GameManager.time_of_day)) % 24
 	var m := int(floor((GameManager.time_of_day - floor(GameManager.time_of_day)) * 60.0))
 	var sec := int(floor(fmod(t, 60.0)))
 	var zone_tag := "INT" if GameManager.player_indoors else "EXT"
-	var ir_tag := " [IR-NVG]" if GameManager.nvg_enabled else ""
-	_stamp_label.text = "  AXON BODY 4 // REC%s\n2026-11-25  %02d:%02d:%02d  [%s]\nUNIT-09  |  BPM %03d  |  HP %03d%%\nHOSTILES: %d/%d  |  INTEL: %s" % [
-		ir_tag, h, m, sec, zone_tag,
+	var ir_tag := " [IR]" if GameManager.nvg_enabled else ""
+	var fps := int(Engine.get_frames_per_second())
+
+	var intel_str := "SÉCURISÉ"
+	if not GameManager.intel_secured and is_instance_valid(GameManager.player):
+		var dist := int(GameManager.player.global_position.distance_to(GameManager.intel_position))
+		intel_str = "%dm" % dist
+
+	_stamp_label.text = "  AXON BODY 4 // REC%s  [%d FPS]\n2026-11-25  %02d:%02d:%02d  [%s]\nUNIT-09  |  BPM %03d  |  HP %03d%%\nHOSTILES: %d/%d  |  INTEL: %s" % [
+		ir_tag, fps, h, m, sec, zone_tag,
 		int(GameManager.player_bpm),
 		int(GameManager.player_health),
 		GameManager.hostiles_alive, GameManager.hostiles_total,
-		"OK" if GameManager.intel_secured else "PENDING"
+		intel_str
 	]
 
-	# Shader dynamic effects
 	_shutter_flash = maxf(0.0, _shutter_flash - delta * 6.5)
 	var hp_ratio := clampf(1.0 - GameManager.player_health / GameManager.player_max_health, 0.0, 1.0)
 	_damage_vignette = lerpf(_damage_vignette, hp_ratio, delta * 5.0)
 
-	var target_rain := 0.85 if (GameManager.weather_preset == GameManager.WeatherPreset.RAIN_STORM and not GameManager.player_indoors) else 0.0
-	_rain_lens = lerpf(_rain_lens, target_rain, delta * 1.8)
-
 	_post_mat.set_shader_parameter("shutter_flash", _shutter_flash)
 	_post_mat.set_shader_parameter("damage_amount", _damage_vignette)
-	_post_mat.set_shader_parameter("rain_lens_amount", _rain_lens)
 
 	if _mag_timer > 0.0:
 		_mag_timer -= delta
 		if _mag_timer <= 0.0:
 			_mag_label.text = ""
 
+	if _hitmarker_timer > 0.0:
+		_hitmarker_timer -= delta
+		if _hitmarker_timer <= 0.0:
+			_hitmarker_label.visible = false
+
 
 func _sync_shader_settings() -> void:
+	# Avoid expensive full-screen framebuffer copy unless IR/Fisheye explicitly active
+	var need_post: bool = GameManager.nvg_enabled or GameManager.barrel_strength > 0.005
+	_post_rect.visible = need_post
+	_crosshair_dot.visible = GameManager.show_crosshair
 	_post_mat.set_shader_parameter("barrel_strength", GameManager.barrel_strength)
 	_post_mat.set_shader_parameter("nvg_amount", 1.0 if GameManager.nvg_enabled else 0.0)
 
@@ -381,10 +425,17 @@ func trigger_shutter_flash(amount: float) -> void:
 	_shutter_flash = maxf(_shutter_flash, clampf(amount, 0.0, 1.0))
 
 
+func _on_enemy_hit(is_headshot: bool) -> void:
+	AudioManager.play_2d("hitmarker", -6.0 if is_headshot else -10.0, 0.06)
+	_hitmarker_label.visible = true
+	_hitmarker_label.add_theme_color_override("font_color", Color(1.0, 0.15, 0.12) if is_headshot else Color(1.0, 1.0, 1.0))
+	_hitmarker_timer = 0.18 if is_headshot else 0.12
+
+
 func _on_event_logged(text: String, level: String) -> void:
 	var prefix := "[%s] " % level
 	_event_lines.append(prefix + text)
-	if _event_lines.size() > 6:
+	if _event_lines.size() > 5:
 		_event_lines.pop_front()
 	_event_log_label.text = "\n".join(_event_lines)
 

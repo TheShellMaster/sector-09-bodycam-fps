@@ -9,6 +9,7 @@ signal player_damaged(health: float, max_health: float)
 signal player_died()
 signal interact_prompt_changed(prompt: String)
 signal mag_status_displayed(status_text: String)
+signal enemy_hit(is_headshot: bool)
 
 enum WeatherPreset {
 	RAIN_STORM,
@@ -18,17 +19,24 @@ enum WeatherPreset {
 }
 
 # Realism & Visual Settings
-var graphics_preset: int = 1 # 0 = Performance, 1 = High (SSR+SSAO+SSIL+VolFog), 2 = Ultra (+SDFGI)
-var barrel_strength: float = 0.115
+var graphics_preset: int = 1 # 0 = Performance, 1 = Balanced (Recommended), 2 = High
+var barrel_strength: float = 0.0 # Adjustable in Settings (0% = max FPS on integrated GPUs)
 var mouse_sensitivity: float = 0.0022
-var base_fov: float = 84.0
-var show_crosshair: bool = false
+var invert_y: bool = false
+var base_fov: float = 82.0
+var show_crosshair: bool = true
 var show_help_hints: bool = true
 var nvg_enabled: bool = false
+var master_volume: float = 0.85
+var ambience_volume: float = 0.55
+var fullscreen: bool = false
+var vsync_enabled: bool = true
 var weather_preset: WeatherPreset = WeatherPreset.RAIN_STORM
-var time_of_day: float = 19.6 # 19:36 dusk/rainy evening — dramatic puddles & volumetric streetlamps!
-var day_cycle_speed: float = 0.015 # Hours per second (gentle living cycle)
+var time_of_day: float = 19.6
+var day_cycle_speed: float = 0.015
 var power_grid_online: bool = true
+var show_title_on_boot: bool = false
+var intel_position: Vector3 = Vector3.ZERO
 
 # Runtime player / mission state
 var player: Node3D = null
@@ -70,6 +78,58 @@ func next_level() -> void:
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	load_settings()
+	apply_audio_and_display_settings()
+
+
+func save_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("audio", "master_volume", master_volume)
+	cfg.set_value("audio", "ambience_volume", ambience_volume)
+	cfg.set_value("controls", "mouse_sensitivity", mouse_sensitivity)
+	cfg.set_value("controls", "invert_y", invert_y)
+	cfg.set_value("controls", "base_fov", base_fov)
+	cfg.set_value("controls", "show_crosshair", show_crosshair)
+	cfg.set_value("graphics", "preset", graphics_preset)
+	cfg.set_value("graphics", "barrel_strength", barrel_strength)
+	cfg.set_value("display", "fullscreen", fullscreen)
+	cfg.set_value("display", "vsync_enabled", vsync_enabled)
+	cfg.save("user://settings.cfg")
+
+
+func load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://settings.cfg") != OK:
+		return
+	master_volume = float(cfg.get_value("audio", "master_volume", master_volume))
+	ambience_volume = float(cfg.get_value("audio", "ambience_volume", ambience_volume))
+	mouse_sensitivity = float(cfg.get_value("controls", "mouse_sensitivity", mouse_sensitivity))
+	invert_y = bool(cfg.get_value("controls", "invert_y", invert_y))
+	base_fov = float(cfg.get_value("controls", "base_fov", base_fov))
+	show_crosshair = bool(cfg.get_value("controls", "show_crosshair", show_crosshair))
+	graphics_preset = int(cfg.get_value("graphics", "preset", graphics_preset))
+	barrel_strength = float(cfg.get_value("graphics", "barrel_strength", barrel_strength))
+	fullscreen = bool(cfg.get_value("display", "fullscreen", fullscreen))
+	vsync_enabled = bool(cfg.get_value("display", "vsync_enabled", vsync_enabled))
+
+
+func apply_audio_and_display_settings() -> void:
+	var master_idx := AudioServer.get_bus_index("Master")
+	if master_idx >= 0:
+		AudioServer.set_bus_volume_db(master_idx, linear_to_db(maxf(master_volume, 0.0001)))
+		AudioServer.set_bus_mute(master_idx, master_volume <= 0.01)
+	var amb_idx := AudioServer.get_bus_index("Ambience")
+	if amb_idx >= 0:
+		AudioServer.set_bus_volume_db(amb_idx, linear_to_db(maxf(ambience_volume, 0.0001)) - 6.0)
+		AudioServer.set_bus_mute(amb_idx, ambience_volume <= 0.01)
+
+	if DisplayServer.get_name() != "headless":
+		var mode := DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_WINDOWED
+		if DisplayServer.window_get_mode() != mode:
+			DisplayServer.window_set_mode(mode)
+		DisplayServer.window_set_vsync_mode(
+			DisplayServer.VSYNC_ENABLED if vsync_enabled else DisplayServer.VSYNC_DISABLED
+		)
 
 
 func emit_noise(pos: Vector3, radius: float, source_tag: String = "player") -> void:

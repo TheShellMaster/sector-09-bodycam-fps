@@ -121,8 +121,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var sens: float = GameManager.mouse_sensitivity * (0.62 if _weapon.is_aiming else 1.0)
+		var y_sign: float = 1.0 if GameManager.invert_y else -1.0
 		rotate_y(-event.relative.x * sens)
-		_pitch = clampf(_pitch - event.relative.y * sens, deg_to_rad(-84.0), deg_to_rad(84.0))
+		_pitch = clampf(_pitch + y_sign * event.relative.y * sens, deg_to_rad(-84.0), deg_to_rad(84.0))
 		_weapon.add_look_sway(event.relative)
 
 	if event.is_action_pressed("reload"):

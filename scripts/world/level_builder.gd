@@ -92,8 +92,8 @@ func _init_pbr_materials() -> void:
 func _load_pbr(prefix: String, uv_scale: Vector3, is_outdoor_wet: bool, metallic: float) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.uv1_scale = uv_scale
-	mat.uv1_triplanar = true
-	mat.uv1_world_triplanar = true
+	# Standard UV mapping (3x faster than triplanar on integrated GPUs!)
+	mat.uv1_triplanar = false
 	mat.metallic = metallic
 	var base := "res://assets/textures/" + prefix
 	if ResourceLoader.exists(base + "_albedo.png"):
@@ -101,13 +101,9 @@ func _load_pbr(prefix: String, uv_scale: Vector3, is_outdoor_wet: bool, metallic
 	if ResourceLoader.exists(base + "_normal.png"):
 		mat.normal_enabled = true
 		mat.normal_texture = load(base + "_normal.png")
-		mat.normal_scale = 1.15
+		mat.normal_scale = 1.1
 	if ResourceLoader.exists(base + "_roughness.png"):
 		mat.roughness_texture = load(base + "_roughness.png")
-	if ResourceLoader.exists(base + "_ao.png"):
-		mat.ao_enabled = true
-		mat.ao_texture = load(base + "_ao.png")
-		mat.ao_light_affect = 0.65
 	if is_outdoor_wet and _weather != null:
 		_weather.outdoor_wet_materials.append(mat)
 	return mat
@@ -481,20 +477,40 @@ func _add_streetlamp(pos: Vector3, rot_y_deg: float) -> void:
 	bulb.material_override = bmat
 	root.add_child(bulb)
 
-	# Volumetric SpotLight3D
+	# Volumetric-look translucent light cone + fast non-shadow SpotLight3D
+	var cone := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.25
+	cm.bottom_radius = 3.2
+	cm.height = 6.8
+	cm.radial_segments = 12
+	cone.mesh = cm
+	cone.position = Vector3(0, 3.6, 1.65)
+	var cmat := StandardMaterial3D.new()
+	cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	cmat.albedo_color = Color(1.0, 0.78, 0.48, 0.055)
+	cmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	cmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	cmat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	cone.material_override = cmat
+	root.add_child(cone)
+
 	var spot := SpotLight3D.new()
 	spot.position = Vector3(0, 6.9, 1.65)
 	spot.rotation_degrees.x = -90.0
 	spot.light_color = Color(1.0, 0.76, 0.44)
-	spot.light_energy = 7.2
-	spot.light_volumetric_fog_energy = 3.2
+	spot.light_energy = 5.5
 	spot.spot_range = 24.0
-	spot.spot_angle = 52.0
+	spot.spot_angle = 55.0
 	spot.spot_attenuation = 1.15
-	spot.shadow_enabled = true
+	spot.shadow_enabled = false
+	spot.distance_fade_enabled = true
+	spot.distance_fade_begin = 32.0
+	spot.distance_fade_length = 12.0
 	root.add_child(spot)
 	if _weather != null:
 		_weather.street_lights.append(spot)
+		_weather.street_lights.append(cone)
 
 
 func _add_indoor_lamp(pos: Vector3, tint: Color, energy: float, flicker: bool) -> void:
@@ -525,11 +541,13 @@ func _add_indoor_lamp(pos: Vector3, tint: Color, energy: float, flicker: bool) -
 	var omni := OmniLight3D.new()
 	omni.position = Vector3(0, -0.35, 0)
 	omni.light_color = tint
-	omni.light_energy = energy
-	omni.light_volumetric_fog_energy = 1.9
-	omni.omni_range = 16.5
-	omni.omni_attenuation = 1.3
-	omni.shadow_enabled = true
+	omni.light_energy = energy * 0.85
+	omni.omni_range = 17.5
+	omni.omni_attenuation = 1.25
+	omni.shadow_enabled = false
+	omni.distance_fade_enabled = true
+	omni.distance_fade_begin = 28.0
+	omni.distance_fade_length = 10.0
 	lamp_body.add_child(omni)
 
 	lamp_body.linked_lights.append(omni)
@@ -580,6 +598,7 @@ func _add_power_breaker(pos: Vector3, rot_y_deg: float) -> void:
 
 
 func _add_intel_laptop(pos: Vector3) -> void:
+	GameManager.intel_position = pos
 	# Tactical table
 	_add_static_box(Vector3(1.5, 0.82, 0.85), pos + Vector3(0, 0.41, 0), _mats["dark_steel"], "metal")
 
@@ -671,4 +690,5 @@ func _bake_navigation() -> void:
 	nav_mesh.agent_max_slope = 48.0
 	nav_mesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_STATIC_COLLIDERS
 	_nav_region.navigation_mesh = nav_mesh
-	_nav_region.bake_navigation_mesh(false)
+	# Bake asynchronously on worker thread so level startup is INSTANT!
+	_nav_region.bake_navigation_mesh(true)

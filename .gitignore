@@ -1,0 +1,15 @@
+# Godot 4 cache & temporary files
+.godot/
+*.translation
+*.import
+
+# Build artifacts (published via GitHub Releases!)
+dist/
+*.x86_64
+*.pck
+*.tar.gz
+
+# Python cache
+__pycache__/
+*.pyc
+.DS_Store
